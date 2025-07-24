@@ -24,6 +24,7 @@ import (
 	"github.com/data-preservation-programs/singularity/handler/file"
 	"github.com/data-preservation-programs/singularity/handler/handlererror"
 	"github.com/data-preservation-programs/singularity/handler/job"
+	"github.com/data-preservation-programs/singularity/handler/service"
 	"github.com/data-preservation-programs/singularity/handler/statechange"
 	"github.com/data-preservation-programs/singularity/handler/storage"
 	"github.com/data-preservation-programs/singularity/handler/wallet"
@@ -65,6 +66,7 @@ type Server struct {
 	stateChangeHandler  statechange.Handler
 	dealtemplateHandler dealtemplate.Handler
 	errorlogHandler     errorlog.Handler
+	serviceHandler      service.Handler
 }
 
 func Run(c *cli.Context) error {
@@ -152,6 +154,7 @@ func InitServer(ctx context.Context, params APIParams) (*Server, error) {
 		stateChangeHandler:  &statechange.DefaultHandler{},
 		dealtemplateHandler: &dealtemplate.DefaultHandler{},
 		errorlogHandler:     &errorlog.DefaultHandler{},
+		serviceHandler:      &service.Handler{},
 	}, nil
 }
 
@@ -586,4 +589,36 @@ func (s *Server) setupRoutes(e *echo.Echo) {
 
 	// Error Logs
 	e.GET("/api/errors", s.toEchoHandler(s.errorlogHandler.ListErrorLogsHandler))
+
+	// Service Management (placeholder - not implemented yet)
+	e.GET("/api/services/status", func(c echo.Context) error {
+		return c.JSON(http.StatusNotImplemented, map[string]string{
+			"message": "Service management not yet integrated with API",
+		})
+	})
+	e.GET("/api/services/:service/status", func(c echo.Context) error {
+		return c.JSON(http.StatusNotImplemented, map[string]string{
+			"message": "Service management not yet integrated with API",
+		})
+	})
+	e.POST("/api/services/:service/start", func(c echo.Context) error {
+		return c.JSON(http.StatusNotImplemented, map[string]string{
+			"message": "Service management not yet integrated with API",
+		})
+	})
+	e.POST("/api/services/:service/stop", func(c echo.Context) error {
+		return c.JSON(http.StatusNotImplemented, map[string]string{
+			"message": "Service management not yet integrated with API",
+		})
+	})
+	e.POST("/api/services/:service/restart", func(c echo.Context) error {
+		return c.JSON(http.StatusNotImplemented, map[string]string{
+			"message": "Service management not yet integrated with API",
+		})
+	})
+	e.GET("/api/services/:service/health", func(c echo.Context) error {
+		return c.JSON(http.StatusNotImplemented, map[string]string{
+			"message": "Service management not yet integrated with API",
+		})
+	})
 }

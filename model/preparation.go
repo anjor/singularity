@@ -414,3 +414,23 @@ func (s *Preparation) GetMinPieceSize() int64 {
 	}
 	return s.MinPieceSize
 }
+
+// ServiceStatus represents a service status record in the database
+type ServiceStatus struct {
+	ID           uint      `gorm:"primaryKey"                         json:"id"`
+	ServiceType  string    `gorm:"uniqueIndex;not null"               json:"serviceType"`
+	State        string    `gorm:"not null"                           json:"state"`
+	StartedAt    *time.Time `json:"startedAt,omitempty"`
+	StoppedAt    *time.Time `json:"stoppedAt,omitempty"`
+	LastError    string    `json:"lastError,omitempty"`
+	HealthStatus string    `json:"healthStatus"`
+	Config       ConfigMap `gorm:"type:jsonb"                         json:"config"`
+	Metadata     ConfigMap `gorm:"type:jsonb"                         json:"metadata"`
+	CreatedAt    time.Time `json:"createdAt"                          table:"format:2006-01-02 15:04:05"`
+	UpdatedAt    time.Time `json:"updatedAt"                          table:"format:2006-01-02 15:04:05"`
+}
+
+// TableName returns the table name for the ServiceStatus
+func (ServiceStatus) TableName() string {
+	return "service_statuses"
+}

@@ -33,6 +33,7 @@ var Tables = []any{
 	&Deal{},
 	&DealStateChange{},
 	&ErrorLog{},
+	&ServiceStatus{},
 }
 
 var logger = logging.Logger("model")

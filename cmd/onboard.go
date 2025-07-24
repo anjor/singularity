@@ -18,9 +18,11 @@ import (
 	"github.com/data-preservation-programs/singularity/handler/dataprep"
 	"github.com/data-preservation-programs/singularity/handler/handlererror"
 	"github.com/data-preservation-programs/singularity/handler/job"
+	"github.com/data-preservation-programs/singularity/handler/service"
 	storageHandlers "github.com/data-preservation-programs/singularity/handler/storage"
 	"github.com/data-preservation-programs/singularity/model"
 	"github.com/data-preservation-programs/singularity/service/errorlog"
+	"github.com/data-preservation-programs/singularity/service/manager"
 	"github.com/data-preservation-programs/singularity/service/workermanager"
 	"github.com/data-preservation-programs/singularity/service/workflow"
 	"github.com/data-preservation-programs/singularity/storagesystem"
@@ -54,9 +56,10 @@ var OnboardCmd = &cli.Command{
 It performs the following steps automatically:
 1. Creates storage connections (if paths provided)
 2. Creates data preparation with deal template configuration
-3. Starts scanning immediately
-4. Enables automatic job progression (scan → pack → daggen → deals)
-5. Optionally starts managed workers to process jobs
+3. Optionally starts API and content provider services
+4. Starts scanning immediately
+5. Enables automatic job progression (scan → pack → daggen → deals)
+6. Optionally starts managed workers to process jobs
 
 This is the simplest way to onboard data from source to storage deals.
 Use deal templates to configure deal parameters - individual deal flags are not supported.
@@ -200,6 +203,38 @@ NOTE: All backends supported by 'storage create' are also supported by 'onboard'
 			Usage:    "Enable automatic deal creation after preparation completion",
 			Value:    true,
 			Category: "Deal Configuration",
+		},
+
+		// Service Management
+		&cli.BoolFlag{
+			Name:     "start-services",
+			Usage:    "Automatically start API and content provider services",
+			Value:    false,
+			Category: "Service Management",
+		},
+		&cli.StringFlag{
+			Name:     "api-bind",
+			Usage:    "Bind address for the API service",
+			Value:    ":9090",
+			Category: "Service Management",
+		},
+		&cli.StringFlag{
+			Name:     "content-provider-bind",
+			Usage:    "Bind address for the content provider service",
+			Value:    "127.0.0.1:7777",
+			Category: "Service Management",
+		},
+		&cli.BoolFlag{
+			Name:     "enable-content-provider-bitswap",
+			Usage:    "Enable bitswap retrieval in content provider",
+			Value:    false,
+			Category: "Service Management",
+		},
+		&cli.BoolFlag{
+			Name:     "stop-services-on-completion",
+			Usage:    "Stop services when onboarding completes (only when wait-for-completion is enabled)",
+			Value:    false,
+			Category: "Service Management",
 		},
 
 		// Worker Management
@@ -408,7 +443,22 @@ func onboardAction(c *cli.Context) error {
 		_ = result // Use later in final output
 	}
 
-	// Step 3: Start workers if requested
+	// Step 3: Start services if requested
+	var serviceManager *manager.ServiceManager
+	if c.Bool("start-services") {
+		if !isJSON {
+			fmt.Println("\n🔧 Starting managed services...")
+		}
+		serviceManager, err = startManagedServices(ctx, db, c)
+		if err != nil {
+			return outputJSONError("failed to start services", err)
+		}
+		if !isJSON {
+			fmt.Println("✓ Started API and content provider services")
+		}
+	}
+
+	// Step 4: Start workers if requested
 	var workerManager *workermanager.WorkerManager
 	workersCount := 0
 	if c.Bool("start-workers") {
@@ -425,7 +475,7 @@ func onboardAction(c *cli.Context) error {
 		}
 	}
 
-	// Step 4: Start scanning
+	// Step 5: Start scanning
 	if !isJSON {
 		fmt.Println("\n🔍 Starting initial scanning...")
 	}
@@ -437,7 +487,7 @@ func onboardAction(c *cli.Context) error {
 		fmt.Println("✓ Scanning started for all source attachments")
 	}
 
-	// Step 5: Monitor progress if requested
+	// Step 6: Monitor progress if requested
 	if c.Bool("wait-for-completion") {
 		if !isJSON {
 			fmt.Println("\n📊 Monitoring progress...")
@@ -447,7 +497,19 @@ func onboardAction(c *cli.Context) error {
 			return outputJSONError("monitoring failed", err)
 		}
 
-		// Only cleanup workers after completion monitoring finishes successfully
+		// Only cleanup services and workers after completion monitoring finishes successfully
+		if c.Bool("stop-services-on-completion") && serviceManager != nil {
+			if !isJSON {
+				fmt.Println("\n🔧 Stopping services...")
+			}
+			err = serviceManager.StopAllServices()
+			if err != nil {
+				if !isJSON {
+					fmt.Printf("⚠ Warning: failed to stop services cleanly: %v\n", err)
+				}
+			}
+		}
+		
 		if workerManager != nil {
 			if !isJSON {
 				fmt.Println("\n🧹 Cleaning up workers...")
@@ -459,11 +521,14 @@ func onboardAction(c *cli.Context) error {
 				}
 			}
 		}
-	} else if workerManager != nil {
-		// When not waiting for completion, leave workers running to process jobs
-		if !isJSON {
-			fmt.Println("\n✅ Workers will continue running to process jobs")
-			fmt.Println("💡 Use --wait-for-completion to monitor progress and stop workers when done")
+	} else {
+		// When not waiting for completion, leave services and workers running
+		if serviceManager != nil && !isJSON {
+			fmt.Println("\n✅ Services will continue running")
+		}
+		if workerManager != nil && !isJSON {
+			fmt.Println("✅ Workers will continue running to process jobs")
+			fmt.Println("💡 Use --wait-for-completion to monitor progress and stop services/workers when done")
 		}
 	}
 
@@ -473,6 +538,13 @@ func onboardAction(c *cli.Context) error {
 		nextSteps := []string{
 			"Monitor progress: singularity prep status " + prep.Name,
 			"Check jobs: singularity job list",
+		}
+		if c.Bool("start-services") {
+			if c.Bool("wait-for-completion") && c.Bool("stop-services-on-completion") {
+				nextSteps = append(nextSteps, "Services have been stopped after completion")
+			} else {
+				nextSteps = append(nextSteps, "API and content provider services are running")
+			}
 		}
 		if c.Bool("start-workers") {
 			if c.Bool("wait-for-completion") {
@@ -504,6 +576,9 @@ func onboardAction(c *cli.Context) error {
 		fmt.Println("\n📝 Next steps:")
 		fmt.Println("   • Monitor progress: singularity prep status", prep.Name)
 		fmt.Println("   • Check jobs: singularity job list")
+		if c.Bool("start-services") {
+			fmt.Println("   • API and content provider services are running")
+		}
 		if c.Bool("start-workers") {
 			fmt.Println("   • Workers are running and will process jobs automatically")
 		} else {
@@ -592,6 +667,51 @@ func startManagedWorkers(ctx context.Context, db *gorm.DB, maxWorkers int) (*wor
 	}
 
 	return manager, nil
+}
+
+// startManagedServices starts the service manager for API and content provider services
+func startManagedServices(ctx context.Context, db *gorm.DB, c *cli.Context) (*manager.ServiceManager, error) {
+	config := manager.ServiceManagerConfig{
+		APIConfig: manager.APIServiceConfig{
+			Bind:    c.String("api-bind"),
+			Enabled: true,
+		},
+		ContentProviderConfig: manager.ContentProviderServiceConfig{
+			HTTPBind:                c.String("content-provider-bind"),
+			EnableHTTPPiece:         true,
+			EnableHTTPPieceMetadata: true,
+			EnableBitswap:           c.Bool("enable-content-provider-bitswap"),
+			LibP2PIdentityKey:       "",
+			LibP2PListenMultiAddrs:  []string{},
+			Enabled:                 true,
+		},
+		WorkerManagerConfig: manager.WorkerManagerServiceConfig{
+			MinWorkers:         1,
+			MaxWorkers:         5,
+			ScaleUpThreshold:   5,
+			ScaleDownThreshold: 2,
+			CheckInterval:      30 * time.Second,
+			WorkerIdleTimeout:  5 * time.Minute,
+			AutoScaling:        true,
+			ScanWorkerRatio:    0.3,
+			PackWorkerRatio:    0.5,
+			DagGenWorkerRatio:  0.2,
+			Enabled:            false, // We handle worker management separately
+		},
+	}
+
+	serviceManager := manager.NewServiceManager(db, config)
+	
+	// Set the global service manager for API endpoints
+	service.SetServiceManager(serviceManager)
+	
+	// Start all services (API first, then content provider due to dependency)
+	err := serviceManager.StartAllServices()
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+
+	return serviceManager, nil
 }
 
 // startScanningForPreparation starts scanning for all source attachments
